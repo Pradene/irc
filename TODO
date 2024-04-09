@@ -1,0 +1,20 @@
+**Clean**
+
+[x] tous les .hpp
+[x] channel.cpp
+[ ] server.cpp
+[ ] commands.cpp
+[ ] user.cpp
+[ ] main.cpp
+[ ] reply.cpp
+[ ] utils.cpp
+
+***Pour clean .cpp***
+- clean les commentaires (tout en anglais, enlever les trucs inutils)
+- mettre les fonctions dans l'ordre du .hpp et dans les bonnes categories
+
+**Derniers tests**
+
+- check compatibilite avec NC (verifier a chaque fois le nb d'arg pour ne pas segfault)
+- check les ports ?
+- correction blanche
