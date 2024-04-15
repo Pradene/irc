@@ -12,8 +12,8 @@
 
 #define RPL_WHOISUSER(requestingUserNick, inquiredUserNick, id, realHost, realName)	((std::string)SERVER_NAME + "311 " + requestingUserNick + " " + inquiredUserNick + " " + id + " " + realHost + " * :" + realName + "\r\n");
 #define RPL_WHOISSERVER(requestingUserNick, inquiredUserNick)						((std::string)SERVER_NAME + "312 " + requestingUserNick + " " + inquiredUserNick + " " + SERVER_NAME + ":" + SERVER_DESCRIPTION + "\r\n");
-#define RPL_WHOISCHANNELS(requestingUserNick, inquiredUserNick, channelList)		((std::string)SERVER_NAME + "319 " + requestingUserNick + " " + inquiredUserNick + " " + ":" + channelList + "\r\n");
 #define RPL_ENDOFWHOIS(requestingUserNick, inquiredUserNick)						((std::string)SERVER_NAME + "318 " + requestingUserNick + " " + inquiredUserNick + " " + ":End of WHOIS list\r\n");
+#define RPL_WHOISCHANNELS(requestingUserNick, inquiredUserNick, channelList)		((std::string)SERVER_NAME + "319 " + requestingUserNick + " " + inquiredUserNick + " " + ":" + channelList + "\r\n");
 
 class Server;
 class Channel;
@@ -27,9 +27,7 @@ public:
 	User(std::string const & username, std::string const & nickname);
 	~User(void);
 
-	bool	operator==(const User &user) const;
-
-	// SETTERS,  GETTERS AND CHECKERS	
+	//SETTERS,  GETTERS	AND UPDATERS
 	void	setUsername(std::string const &username);
 	void	setNickname(std::string const &nickname);
 	void	setInet(std::string const &inet);
@@ -48,24 +46,22 @@ public:
 	const struct sockaddr_in&		getAddr() const;
 	const std::deque<std::string>&	getCommands() const;
 	const std::string&				getSender() const;
-	const std::string				getChannelJoinedNames() const;
-	const std::vector<Channel *>	&getChannelJoined() const;
-
-	int								createUserSocket(int socketServer);
-
-	void							quit(Server  & server);
-
-	const bool&						isConnected() const;
-	const bool&						isSent() const;
-	void							displayInfo() const;
+	const std::string				getChannelJoined() const;
 
 	void							updateSender();
+	void							addCommand(std::string const & command);
+	
+	//CONNECTIONS
+	int								createUserSocket(int socketServer);
+	void							quit(Server  & server, std::string const & reason);
+	const bool&						isConnected() const;
+	const bool&						isSent() const;
 
-	//COMMANDS MANAGEMENT
-	void	addCommand(std::string const & command);
+	//CHANNEL MANAGEMENT
 	void	addChannel(Channel *channel);
 	void	leaveChannel(Channel *channel);
 
+	//USER INFO
 	void	whoIs(Server const &server, User &requestingUser) const;
 
 private:
@@ -85,6 +81,7 @@ private:
 	std::vector<Channel *>	_channelsJoined;
 
 	bool					_connectionSent;
+
 };
 
 #endif

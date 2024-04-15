@@ -1,33 +1,6 @@
 #include "Utils.hpp"
 
-/*
-Displays error message on standard error output
-*/
-void	error(std::string err)
-{
-	if (!errno)
-		errno = 1;
-	std::cerr << "error: " << err << std::endl
-	<< "error code: " << errno << std::endl;
-	exit(errno);
-}
-
-/*
-Set the given fd to non blocking, ie. 
-the reading and writing operations 
-associated with this fd will not block the program
-even tho the data are not immediatly available
-*/
-int setNonBlocking(int fd)
-{
-	if (fcntl(fd, F_SETFL, O_NONBLOCK) == 1)
-		return (1);
-	return (0);
-}
-
-/*
-Print a vector of string into stdout
-*/
+/*Print a vector of string into stdout*/
 void	displayStringVector(std::vector<std::string> strings)
 {
 	for (std::vector<std::string>::iterator it = strings.begin(); it != strings.end(); ++it)
@@ -35,6 +8,7 @@ void	displayStringVector(std::vector<std::string> strings)
     std::cout << std::endl;
 }
 
+/*ATOI but better*/
 int	toInt(std::string s) {
 	std::stringstream	ss(s);
     int					value;
@@ -45,4 +19,25 @@ int	toInt(std::string s) {
 	}
 
 	return (value);
+}
+
+std::string	toString(int n) {
+    std::stringstream ss;
+    
+	ss << n;
+    return (ss.str());
+}
+
+bool	isValidName(std::string const &name) {
+	if (name.length() > 12)
+		return (false);
+
+	for (size_t i = 0; i < name.length(); ++i) {
+        char c = name[i];
+        if (!(isalnum(c) || c == '_')) {
+            return (false);
+        }
+    }
+
+	return (true);
 }

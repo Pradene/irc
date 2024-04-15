@@ -1,16 +1,17 @@
 #include "Server.hpp"
 
+/******************************************************************************/
+/*									CONNECTION PART							*/
+/******************************************************************************/
 
-
-// CONNECTION PART
-
+/*Checks is user is connected*/
 bool	Server::userIsConnected(User const &user) {
 	return (!user.getUsername().empty() \
 	&& !user.getNickname().empty() \
 	&& user.isConnected());
 }
 
-
+/*Checks */
 void	Server::checkConnection(User &user) {
 	if (userIsConnected(user) && !user.isSent()) {
 		welcome(user);
@@ -18,7 +19,7 @@ void	Server::checkConnection(User &user) {
 	}
 }
 
-
+/*Checks if password given by the user is right*/
 bool	Server::password(User &user, std::vector<std::string> const &args) {
 	if (user.isConnected())
 		return (true);
@@ -27,13 +28,11 @@ bool	Server::password(User &user, std::vector<std::string> const &args) {
 
 	mess = CMD_NOTICE_TARGET(SERVER_NAME, std::string("*** Checking your password..."), std::string("AUTH"));
 	sendMessageToUser(user, mess);
-	
 	if (args.size() != 1 || !checkPassword(args[0])) {
 		mess = CMD_NOTICE_TARGET(SERVER_NAME, std::string("*** Wrong password, please try again..."), std::string("AUTH"));
 		sendMessageToUser(user, mess);
-		removeUser(user);
+		removeUser(user, "");
 		return (false);
-
 	} else {
 		mess = CMD_NOTICE_TARGET(SERVER_NAME, std::string("*** Password is correct..."), std::string("AUTH"));
 		sendMessageToUser(user, mess);
@@ -43,7 +42,7 @@ bool	Server::password(User &user, std::vector<std::string> const &args) {
 	}
 }
 
-
+/*Checks the username and sets it*/
 void	Server::userName(User &user, std::vector<std::string> const &args)
 {
 	std::string	mess;
@@ -63,13 +62,13 @@ void	Server::userName(User &user, std::vector<std::string> const &args)
 	}
 }
 
-
+/*Checks the nickname and sets it*/
 void	Server::nickName(User &user, std::vector<std::string> const &args)
 {
 	std::string	mess;
 	mess = CMD_NOTICE_TARGET(SERVER_NAME, std::string("*** Checking your nickname..."), std::string("AUTH"));
-	if (args.size() == 0) {
-		mess = CMD_NOTICE_TARGET(SERVER_NAME, std::string("*** Your nickname is empty..."), std::string("AUTH"));
+	if (args.size() == 0 || isValidName(args[0]) == 0) {
+		mess = CMD_NOTICE_TARGET(SERVER_NAME, std::string("*** Your nickname is wrong..."), std::string("AUTH"));
 		sendMessageToUser(user, mess);
 		return ;
 	}
@@ -107,83 +106,49 @@ void	Server::nickName(User &user, std::vector<std::string> const &args)
 	}
 }
 
-void	Server::quit(User &user, std::string const &reason)
+/*
+Sends a formatted welcome message to
+a newly connected user to the server.
+*/
+void    Server::welcome(User &user) const
 {
-	std::string 					mess = CMD_QUIT(user.getSender(), reason);
-	struct epoll_event				ev;
-	std::vector<User *>::iterator	userIt;
-	std::vector<Channel *>			channels;
-	
-	if (epoll_ctl(_epollfd, EPOLL_CTL_DEL, user.getSocket(), &ev) == -1)
-		return ;
+	std::string message = _BOLD _MAGENTA"Welcome to our IRC server!\n";
+	message += _MAGENTA"⠀⠀⠀⠀⣀⡤⢤⣄⠀⣠⡤⣤⡀⠀⠀⠀\n";
+	message += _MAGENTA"⠀⠀⢀⣴⢫⠞⠛⠾⠺⠟⠛⢦⢻⣆⠀⠀\n";
+	message += _MAGENTA"⠀⠀⣼⢇⣻⡀⠀⠀⠀⠀⠀⢸⡇⢿⣆⠀\n";
+	message += _MAGENTA"⠀⢸⣯⢦⣽⣷⣄⡀⠀⢀⣴⣿⣳⣬⣿⠀\n";
+	message += _MAGENTA"⢠⡞⢩⣿⠋⠙⠳⣽⢾⣯⠛⠙⢹⣯⠘⣷\n";
+	message += _MAGENTA"⠀⠈⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠋⠁\n";
+	message += _ITALIC _MAGENTA"                    Created by @mudoh, @lpradene and @madavid\n" _RESET;
 
-	channels = user.getChannelJoined();
-	for (std::vector<Channel *>::iterator channelIt = channels.begin(); channelIt != channels.end(); ++channelIt) {
-		(*channelIt)->removeUser(user);
-		sendMessageToALL(user, (*channelIt)->getMembers(), mess);
-	}
-	
-	userIt = std::find(_users.begin(), _users.end(), &user);
-	if (userIt == _users.end())
-		return ;
-	
-	_users.erase(userIt);
-	delete &user;
+	std::string mess;
+	mess = RPL_WELCOME(user.getNickname(), message);
+	sendMessageToUser(user, mess);
+
+	mess = RPL_YOURID(user.getNickname());
+	sendMessageToUser(user, mess);
+
+	mess = RPL_YOURHOST(user.getNickname());
+	sendMessageToUser(user, mess);
+
+	mess = RPL_MYINFO(user.getNickname());
+	sendMessageToUser(user, mess);
+
 }
-
-
-
-// PONG
 
 /*
 Sends a formatted "PONG" response to a user,
-typically used to respond to a "PING" message from the IRC server to keep the connection active.
-*/
-void    Server::pong(const User &user, std::vector<std::string> const & args) const
+typically used to respond to a "PING" message from the IRC server to keep the connection active. */
+void	Server::pong(const User &user, std::vector<std::string> const & args) const
 {
 	if (args.size() < 1)
 		return;
 	std::string const & message = args[0];
-    std::string mess = CMD_PING(message, user.getNickname());
-    sendMessageToUser(user, mess);
+	std::string mess = CMD_PING(message, user.getNickname());
+	sendMessageToUser(user, mess);
 }
 
-
-
-// COMMANDS
-
-void    Server::message(const User &user, std::vector<std::string> const & args, std::string const &message) const
-{
-	if (args.size() < 1)
-		return;
-    std::string mess = CMD_PRIVMSG(user.getSender(), args[0], message);
-
-    sendMessage(user, args[0], mess);
-}
-
-
-void	Server::who(User &user, std::vector<std::string> const &args) const
-{
-	std::string	mess;
-	
-	if (args.size() < 1)
-		return ;
-	std::string const &channelName = args[0];
-
-	//check if channel exists
-	Channel	*channel;
-	try {
-		channel = findChannelByName(channelName, user);
-	
-	} catch(const std::exception& e) {
-		sendMessageToUser(user, e.what());
-		return ;
-	}
-	
-	channel->who(*this, user, true); // ???
-}
-
-
+/*Display informations about a user of the server*/
 void	Server::whoIs(User &requestingUser, std::vector<std::string> const &args) const
 {
 	std::string	mess;
@@ -206,7 +171,17 @@ void	Server::whoIs(User &requestingUser, std::vector<std::string> const &args) c
 	investigatedUser->whoIs(*this, requestingUser);
 }
 
+/*Format and send a message to the user to inform them about a new private message*/
+void	Server::privmsg(const User &user, std::vector<std::string> const & args, std::string const &message) const
+{
+	if (args.size() < 1)
+		return;
+	std::string mess = CMD_PRIVMSG(user.getSender(), args[0], message);
 
+	sendMessage(user, args[0], mess);
+}
+
+/*Sends a notice to the user*/
 void	Server::notice(User &user, std::vector<std::string> const &	args)
 {
 	std::string	mess;
@@ -225,8 +200,7 @@ void	Server::notice(User &user, std::vector<std::string> const &	args)
 	sendMessageToUser(*userTarget, mess);
 }
 
-
-
+/*Display informations about a user of the server*/
 void	Server::userHost(User &user, std::vector<std::string> const &args)
 {
 	std::string		messtmp = "";
@@ -259,10 +233,11 @@ void	Server::userHost(User &user, std::vector<std::string> const &args)
 	sendMessageToUser(user, mess);
 }
 
+/******************************************************************************/
+/*								   	CHANNEL COMMANDS									*/
+/******************************************************************************/
 
-
-// CHANNELS COMMANDS
-
+/*Checks the parameters, creates the channels if it doesnt exists then tries to add the user to the channel*/
 void	Server::joinChannel(User &user, std::vector<std::string> const &args)
 {
 	std::string channelName;
@@ -323,36 +298,7 @@ void	Server::joinChannel(User &user, std::vector<std::string> const &args)
 	}
 }
 
-
-void	Server::partChannel(User &user,std::vector<std::string> const &args, std::string const &reason)
-{
-	Channel				*channel;
-	std::string			mess;
-
-	try {
-		if (args.size() < 1)
-			throw needMoreParams(user.getNickname(), "PART");
-	
-	} catch(const std::exception& e) {
-		sendMessageToUser(user, e.what());
-		return ;
-	}
-
-	std::string const	&channelName = args[0];
-	try {
-		channel = findChannelByName(channelName, user);
-	
-	} catch(const std::exception& e) {
-		sendMessageToUser(user, e.what());
-		return ;
-	}
-
-	if (channel->partUser(*this, user, reason)) {
-		user.leaveChannel(channel);
-	}
-}
-
-
+/*Checks the parameters,then tries to invite the user to the channel*/
 void	Server::inviteChannel(User &invitingUser, std::vector<std::string> const & args)
 {
 	std::string	mess;
@@ -393,7 +339,40 @@ void	Server::inviteChannel(User &invitingUser, std::vector<std::string> const & 
 	}
 }
 
+/*Checks the parameters, then tries to remove the user from the channel*/
+void	Server::partChannel(User &user,std::vector<std::string> const & args, std::string const & reason)
+{
+	std::string const	&channelName = args[0];
+	Channel				*channel;
+	std::string			mess;
 
+	try 
+	{
+		if (args.size() < 1)
+			throw needMoreParams(user.getNickname(), "PART");
+	}
+	catch(const std::exception& e)
+	{
+		sendMessageToUser(user, e.what());
+		return ;
+	}
+
+	try {
+		channel = findChannelByName(channelName, user);
+	} catch(const std::exception& e) {
+		sendMessageToUser(user, e.what());
+		return ;
+	}
+
+	if (channel->partUser(*this, user, reason))
+	{
+		user.leaveChannel(channel);
+		if (channel->isEmpty())
+			removeChannel(channel);
+	}
+}
+
+/*Checks the parameters,then tries to kick the user to the channel*/
 void	Server::kickChannel(User &kicker, std::vector<std::string> const & args, std::string const & reason) //peut etre merge avec part plus tard, mais la cest pour eviter les pb
 {
 	std::string	mess;
@@ -428,7 +407,7 @@ void	Server::kickChannel(User &kicker, std::vector<std::string> const & args, st
 		{
 			kickedUser->leaveChannel(channel);
 			if (channel->isEmpty())
-				removeChannel(channel);//inutil i think
+				removeChannel(channel);
 		}
 	}
 	catch(const std::exception& e)
@@ -438,7 +417,7 @@ void	Server::kickChannel(User &kicker, std::vector<std::string> const & args, st
 	return ;
 }
 
-
+/*Checks the parameters,then tries to updates the channel topic*/
 void	Server::topicChannel(User &user, std::vector<std::string> const & args, std::string const & topic)
 {
 	std::string	mess;
@@ -465,11 +444,19 @@ void	Server::topicChannel(User &user, std::vector<std::string> const & args, std
 		sendMessageToUser(user, e.what());
 		return ;
 	}
+	
+	if (topic.empty()) {
+		mess = RPL_TOPIC(user.getNickname(), channel->getName(), channel->getTopic());
+		sendMessageToUser(user, mess);
 
-	channel->updateTopic(*this, user, topic);
+		mess = RPL_TOPICWHOTIME(user.getNickname(), channel->getName(), channel->getTopicUpdateUser(), channel->getTopicUpdateTimestamp());
+		sendMessageToUser(user, mess);
+	} else {
+		channel->updateTopic(*this, user, topic);
+	}
 }
 
-
+/*Checks the parameters,then tries to change channel modes*/
 void	Server::modeChannel(User &user, std::vector<std::string> const &args)
 {
 	std::string	mess;
@@ -486,7 +473,7 @@ void	Server::modeChannel(User &user, std::vector<std::string> const &args)
 
 	const std::string &target = args[0];
 	if (target[0] != '#') {
-		return ; // voir si on envoi un message
+		return ;
 	}
 
 	Channel	*channel;
@@ -499,4 +486,26 @@ void	Server::modeChannel(User &user, std::vector<std::string> const &args)
 	}
 
 	channel->updateMode(*this, user, args);
+}
+
+/*Display informations about users of a given channel*/
+void	Server::who(User &user, std::vector<std::string> const &args) const
+{
+	std::string	mess;
+	
+	if (args.size() < 1)
+		return ;
+	std::string const &channelName = args[0];
+
+	//checks if channel exists
+	Channel	*channel;
+	try {
+		channel = findChannelByName(channelName, user);
+	
+	} catch(const std::exception& e) {
+		sendMessageToUser(user, e.what());
+		return ;
+	}
+	
+	channel->who(*this, user, true);
 }

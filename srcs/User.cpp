@@ -40,17 +40,8 @@ closed when the object is destroyed.
 */
 User::~User(void) { close(_socket); }
 
-/*
-Overload enables comparison of User
-objects for equality based on their nicknames.
-If two User objects have the same nickname,
-they are considered equal.
-*/
-bool	User::operator==(const User &user) const { return (_nickname == user.getNickname()); }
-
-
 /******************************************************************************/
-/*							SETTERS,  GETTERS AND CHECKERS					  */
+/*							SETTERS,  GETTERS AND UPDATERS						  */
 /******************************************************************************/
 
 void	User::setUsername(std::string const & username) { _username = username; }
@@ -62,12 +53,6 @@ void	User::setSocket(int const & socket) { _socket = socket; }
 void	User::setInet(std::string const & inet) { _inetNtoa = inet; }
 void	User::setStatus(bool const & connected) { _isConnected = connected; }
 void	User::setSent(bool const & connectionSent) { _connectionSent = connectionSent; }
-void	User::updateSender() {
-	_sender.clear();
-	std::string adress = inet_ntoa(_addr.sin_addr);
-	_sender = ":" + _nickname + "!" + "~" + _username + "@" + adress;
-}
-
 
 const std::string& 				User::getUsername() const { return (_username); }
 const std::string&				User::getNickname() const { return (_nickname); }
@@ -77,9 +62,7 @@ const struct sockaddr_in&		User::getAddr() const { return (_addr); }
 const std::string&				User::getBuffer() const { return (_commandBuffer); }
 const std::deque<std::string>&	User::getCommands() const { return (_commands); }
 const std::string&				User::getSender() const  {return (_sender); }
-
-const std::vector<Channel *>    &User::getChannelJoined() const { return (_channelsJoined); }
-const std::string				User::getChannelJoinedNames() const {
+const std::string				User::getChannelJoined() const {
 	std::string channelJoinedStr;
 	for (size_t i = 0; i < _channelsJoined.size(); ++i)	{
 		channelJoinedStr.append(_channelsJoined[i]->getName() + " ");
@@ -87,21 +70,23 @@ const std::string				User::getChannelJoinedNames() const {
 	return (channelJoinedStr);
 }
 
-const bool&						User::isConnected() const { return (_isConnected); }
-const bool&						User::isSent() const { return (_connectionSent); }
+void	User::updateSender() {
+	_sender.clear();
+	std::string adress = inet_ntoa(_addr.sin_addr);
+	_sender = ":" + _nickname + "!" + "~" + _username + "@" + adress;
+}
 
 /*
-Displays information about a User object,
-including its username and nickname,
-to the standard output.*/
-void	User::displayInfo() const
-{
-	std::cout << "Info:" << std::endl;
-	std::cout << "Username: " << getUsername() << std::endl;
-	std::cout << "Nickname: " << getNickname() << std::endl;
-	std::cout << "Inet ntoa: " << getInet() << std::endl;
-	std::cout << std::endl;
-}
+Allows adding commands to the list 
+of commands associated with a User object.
+Each command added using this function is
+stored in the _commands vector for later processing.
+*/
+void	User::addCommand(std::string const & command) { _commands.push_back(command); }
+
+/******************************************************************************/
+/*									CONNECTIONS									*/
+/******************************************************************************/
 
 /*
 Accepts an incoming connection on a server socket,
@@ -121,7 +106,7 @@ int	User::createUserSocket(int socketServer)
 	if (socket == -1)
 		return (0);
 
-	if (setNonBlocking(socket))
+	if (fcntl(socket, F_SETFL, O_NONBLOCK) == -1)
 		return (0);
 
 	setAddr(addr);
@@ -130,17 +115,24 @@ int	User::createUserSocket(int socketServer)
 	return (socket);
 }
 
-/******************************************************************************/
-/*								COMMANDS MANAGEMENT							  */
-/******************************************************************************/
+void	User::quit(Server &server, std::string const & reason)
+{
+	Channel* channel;
+	for (size_t i = 0; i < _channelsJoined.size(); i++)
+	{
+		channel = _channelsJoined[i];
+		channel->quit(server, *this, reason);
+		if (channel->isEmpty())
+			server.removeChannel(channel);
+	}
+}
 
-/*
-Sllows adding commands to the list 
-of commands associated with a User object.
-Each command added using this function is
-stored in the _commands vector for later processing.
-*/
-void	User::addCommand(std::string const & command) { _commands.push_back(command); }
+const bool&						User::isConnected() const { return (_isConnected); }
+const bool&						User::isSent() const { return (_connectionSent); }
+
+/******************************************************************************/
+/*								CHANNEL MANAGEMENT							  */
+/******************************************************************************/
 
 void	User::addChannel(Channel *channel)
 {	
@@ -157,12 +149,16 @@ void	User::leaveChannel(Channel *channel)
     std::vector<Channel*>::iterator it = std::find(_channelsJoined.begin(), _channelsJoined.end(), channel);
 
     if (it == _channelsJoined.end()) {
-        return ;
+        return ; // ce cas devrait jamais se produire en vrai
     } else {
         _channelsJoined.erase(it);
     }
 
 }
+
+/******************************************************************************/
+/*										USER INFO 								  */
+/******************************************************************************/
 
 void	User::whoIs(Server const &server, User &requestingUser) const
 {
@@ -174,7 +170,7 @@ void	User::whoIs(Server const &server, User &requestingUser) const
 	mess = RPL_WHOISSERVER(requestingUser.getNickname(), _nickname);
 	server.sendMessageToUser(requestingUser, mess);
 
-	mess = RPL_WHOISCHANNELS(requestingUser.getNickname(), _nickname, getChannelJoinedNames());
+	mess = RPL_WHOISCHANNELS(requestingUser.getNickname(), _nickname, getChannelJoined());
 	server.sendMessageToUser(requestingUser, mess);
 
 	mess = RPL_ENDOFWHOIS(requestingUser.getNickname(), _nickname);

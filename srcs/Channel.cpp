@@ -1,12 +1,10 @@
 #include "Channel.hpp"
 
-
-
 /******************************************************************************/
 /*						CONSTRUCTORS & DESTRUCTORS							  */
 /******************************************************************************/
 
-/* Default constructor initializing channel's names and topic strings as empty*/
+/* Default constructor initializing channel's names and topic strings as empty.*/
 Channel::Channel() :
 	_name(""),
 	_userList(""),
@@ -51,25 +49,26 @@ void	Channel::setName(std::string const & name) { _name = name; }
 
 const std::string				&Channel::getName() const { return (_name); }
 const std::map<User *, bool>	&Channel::getMembers() const { return (_members); }
-bool							Channel::isEmpty() const { return (_members.empty()); }
+bool    						Channel::isEmpty() const { return (_members.empty()); }
+const std::string				&Channel::getTopic() const { return (_topic);}
+const std::string				&Channel::getTopicUpdateUser() const { return (_topicUpdateUser);}
+const std::string				&Channel::getTopicUpdateTimestamp() const { return (_topicUpdateTimestamp);}
 
 /******************************************************************************/
 /*							USERS MANAGEMENT								  */
 /******************************************************************************/
 
-void	Channel::removeUser(User &user) {
-	std::map<User *, bool>::iterator it = _members.find(&user);
-	if (it == _members.end())
-		return ;
-	_members.erase(it);
-	updateUserList();
-}
-
+/* Add user a new user to a specified channel
+Checks :
+- if user is already on chan,
+- if a password is needed and if it is correct,
+- if the channel is on invite only,
+- if there is a user limit
+After the checks, insert the user into the container, notify channel members about the new joiner and send informations about the canal to the new joiner */
 bool	Channel::addUser(Server const &server, User &user, std::string password, bool op)
 {
 	std::string mess;
 
-	//il faut checker si je suis pas deja sur le channel, si cest le cas, return false
 	if (userOnChannel(user) == true) {
 		return (false);
 	}
@@ -84,8 +83,6 @@ bool	Channel::addUser(Server const &server, User &user, std::string password, bo
 	if (_inviteOnly && inviteIt == _pendingUserInvitations.end()) {
 		mess = ERR_CHANNELUSERNOTINVIT(user.getNickname(), _name)
 		server.sendMessageToUser(user, mess);
-		// mess = CMD_NOTICE_TARGET(user.getNickname(), "This canal is on invite-only mode, you need to be invited to access it. If you think it is an error, you may contact one of the channel operator", _name);
-		// server.sendMessageToUser(user, mess);
 		return (false);
 
 	} else if (_inviteOnly) {
@@ -96,15 +93,15 @@ bool	Channel::addUser(Server const &server, User &user, std::string password, bo
 		mess = ERR_CHANNELISFULL(user.getNickname(), _name);
 		server.sendMessageToUser(user, mess);
 		return (false);
+
 	} else {
 		_members.insert(std::make_pair(&user, op));
 	}
 	
 	updateUserList();
 
-	// notify every user about new joiner
 	mess = CMD_JOIN(user.getSender(), _name);
-	server.sendMessageToALL(user, _members, mess, false);
+	server.sendMessageToALL(user, _members, mess);
 
 	mess = RPL_TOPIC(user.getNickname(), _name, _topic);
 	server.sendMessageToUser(user, mess);
@@ -125,30 +122,30 @@ bool	Channel::addUser(Server const &server, User &user, std::string password, bo
 	return (true);
 }
 
-bool	Channel::partUser(Server const &server, User &leavingUser, std::string const &reason) //add later raison
+/* After checking if the requesting user is on the channel, notify every user from the canal about the depart and the reason, then proceed to remove the user from the channel*/
+bool	Channel::partUser(Server const &server, User &leavingUser, std::string const &reason)
 {
 	std::string	mess;
 
-	if (userOnChannel(leavingUser) == false) {
+	if (userOnChannel(leavingUser) == false)
+	{
 		mess = ERR_NOTONCHANNEL(leavingUser.getNickname(), _name);
 		server.sendMessageToUser(leavingUser, mess);
 		return (false);
 	}
-
+	
 	mess = CMD_PART(leavingUser.getSender(), _name, reason);
 	server.sendMessageToALL(leavingUser, _members, mess);
 	
-	std::map<User *, bool>::iterator it = _members.find(&leavingUser);
-	_members.erase(it);
-	updateUserList();
+	removeUser(leavingUser);
 
 	return (true);
 }
 
+/* After checking if the kicker user is on the channel, is channel operator and if the kicked user is also on the channel, notify every user from the canal about the kick and the reason, then proceed to remove the user from the channel*/
 bool	Channel::kickUser(Server const &server, User &kickedUser, User &kickerUser, std::string const &reason)
 {
 	std::string	mess;
-	std::string	name;
 	
 	if (userOnChannel(kickerUser) == false) {
 		mess = ERR_NOTONCHANNEL(kickerUser.getNickname(), _name);
@@ -166,22 +163,20 @@ bool	Channel::kickUser(Server const &server, User &kickedUser, User &kickerUser,
 		return (false);
 	}
 
-	name = kickedUser.getNickname();
-	mess = CMD_KICK(kickerUser.getSender(), _name, name, reason);
+	mess = CMD_KICK(kickerUser.getSender(), _name, kickedUser.getNickname(), reason);
 	server.sendMessageToALL(kickerUser, _members, mess);
 
-	std::map<User *, bool>::iterator it = _members.find(&kickedUser);
-	_members.erase(it);
-	updateUserList();
+	removeUser(kickedUser);
 
 	return (true);
 }
 
+/* After checking if the inviting user is on the channel and is channel operator, add inivited user on the container, send an invitation to the invited user, a success message to the inviting user, then notify every user from the canal about the invitation*/
 void	Channel::inviteUser(Server const &server, User &invitedUser, User &invitingUser)
 {
 	std::string	mess;
 
-	//check si inviting user est sur le channel
+	//check if the inviting user is on the channel
 	if (userOnChannel(invitingUser) == false)
 	{
 		mess = ERR_NOTONCHANNEL(invitingUser.getNickname(), _name);
@@ -214,11 +209,33 @@ void	Channel::inviteUser(Server const &server, User &invitedUser, User &inviting
 	server.sendMessageToALL(invitingUser, _members, mess);
 }
 
+/* Notify channel users about a chan user who quitted the server, before proceding to erase the member from the container of users and updating the user list */
+void	Channel::quit(Server const &server, User &quiter, std::string const & reason)
+{
+	std::string mess = CMD_QUIT(quiter.getSender(), reason);
+	server.sendMessageToALL(quiter, _members, mess);
+	removeUser(quiter);
+}
+
+void	Channel::removeUser(User & user)
+{
+	std::map<User *, bool>::iterator it = _members.find(&user);
+	if (it == _members.end())
+		return ;
+	_members.erase(it);
+	updateUserList();
+}
+
+/******************************************************************************/
+/*										UPDATES								  */
+/******************************************************************************/
+
+/* After checking if requesting user is on the channel, the topic mode and if requesting user is operator on this channel, updates the topic, topic time, topic changer and notify every user of the channel about the changes*/
 void    Channel::updateTopic(Server const &server, User &user, std::string const &topic)
 {
 	std::string	mess;
 
-	//check si user est dans le canal
+	//check if user is on the channel
 	if (userOnChannel(user) == false)
 	{
 		mess = ERR_NOTONCHANNEL(user.getNickname(), _name);
@@ -228,7 +245,7 @@ void    Channel::updateTopic(Server const &server, User &user, std::string const
 
 	if (_topicMode)
 	{
-		//check si user est operateur dans le channel
+		//check if user is operator in the canal
 		if (userIsOP(user) == false)
 		{
 			mess = ERR_CHANOPRIVSNEEDED(user.getNickname(), _name);
@@ -254,7 +271,7 @@ void    Channel::updateTopic(Server const &server, User &user, std::string const
 	server.sendMessageToALL(user, _members, mess);
 }
 
-/* Mode possible option :
+/* Available options for mode :
 - i : set/remove invite only
 - t : set/remove restriction on topic modification
 - k : set/remove channel password
@@ -268,18 +285,20 @@ void	Channel::updateMode(Server const &server, User &user, std::vector<std::stri
 	size_t		it = 2;
 	std::string	mess;
 
+	//check arguments
 	if (args.size() >= 2)
 		options = args[1];
 	else
 		return ;
 
+	//check if user is operator in the channel
 	if (userIsOP(user) == false) {
 		mess = ERR_CHANOPRIVSNEEDED(user.getNickname(), _name);
 		server.sendMessageToUser(user, mess);
 		return ;
 	}
 
-
+	//loop through the options, cheking the validity of each option
 	for (size_t i = 0; options[i]; ++i) {
 		if (options[i] == '+') {
 			change = 1;
@@ -293,16 +312,19 @@ void	Channel::updateMode(Server const &server, User &user, std::vector<std::stri
 			return ;
 		}
 
+		//set/unset invite only mode
 		if (options[i] == 'i') {
 			_inviteOnly = change;
 			mess = CMD_MODE(user.getSender(), _name, ((change) ? "+" : "-"), options[i], "");
 			server.sendMessageToALL(user, _members, mess);
 
+		//set/unset priviledges needed to updates topic
 		} else if (options[i] == 't') {
 			_topicMode = change;
 			mess = CMD_MODE(user.getSender(), _name, ((change) ? "+" : "-"), options[i], "");
 			server.sendMessageToALL(user, _members, mess);
 
+		//set and update /unset password requirement to join the channel
 		} else if (options[i] == 'k') {
 			if (change == 1 && args.size() < it + 1)
 				return ;
@@ -316,7 +338,8 @@ void	Channel::updateMode(Server const &server, User &user, std::vector<std::stri
 			} else {
 				_password = args[it++];
 			}
-		
+	
+		//add/remove channel operators
 		} else if (options[i] == 'o') {
 			if (args.size() < it + 1)
 				return ;
@@ -341,16 +364,24 @@ void	Channel::updateMode(Server const &server, User &user, std::vector<std::stri
 				return ;
 			}
 
+		//set/unset channel members number limit
 		} else if (options[i] == 'l') {
-			if (args.size() < it + 1)
-				return ;
+			
+			if (change) {
+				if (args.size() < it + 1)
+					return ;
+				int	limit = toInt(args[it++]);
+				if (limit < 0)
+					return ;
+				_userLimit = limit;
+				mess = CMD_MODE(user.getSender(), _name, "+", options[i], toString(limit));
 
-			int	limit = toInt(args[it++]);
-			if (limit < 0)
-				return ;
+			} else {
+				_userLimit = 0;
+				mess = CMD_MODE(user.getSender(), _name, "-", options[i], "");
+			}
 
-			_userLimit = limit;
-			mess = CMD_MODE(user.getSender(), _name, ((change) ? "+" : "-"), options[i], ((change) ? args[it] : ""));
+
 			server.sendMessageToALL(user, _members, mess);
 		}
 	}
@@ -376,18 +407,7 @@ void	Channel::updateUserList()
 /*							INFORMATION ABOUT USERS							  */
 /******************************************************************************/
 
-// checking if user is on channel
-bool	Channel::userOnChannel(User &user) {
-	std::map<User *, bool>::iterator	it = _members.find(&user);
-
-	if (it == _members.end()) {
-		return (false);
-	}
-
-	return (true);
-}
-
-// checking if user is operator
+/* Checks if the user given as parameter is operator on the channel */
 bool	Channel::userIsOP(User &user) {
 	std::map<User *, bool>::iterator	it = _members.find(&user);
 
@@ -398,16 +418,33 @@ bool	Channel::userIsOP(User &user) {
 	return (true);
 }
 
+/* Checks if the user given as parameter is on the channel */
+bool	Channel::userOnChannel(User &user) {
+	std::map<User *, bool>::iterator	it = _members.find(&user);
+
+	if (it == _members.end()) {
+		// std::string mess = ERR_NOTONCHANNEL(user.getNickname(), _name);
+		// server.sendMessageToUser(user, mess);
+		return (false);
+	}
+
+	return (true);
+}
+
+/* Updates user list of the canal, adds @ in front of operator users */
 void    Channel::who(Server const & server, User &user, bool checkNeeded)
 {
 	std::string mess;
 
-	//check si user est sur le canal
-	if (checkNeeded && userOnChannel(user) == false)
+	//checks if user est is on the channel
+	if (checkNeeded)
 	{
-		mess = ERR_NOTONCHANNEL(user.getNickname(), _name);
-		server.sendMessageToUser(user, mess);
-		return ;
+		if (userOnChannel(user) == false)
+		{
+			mess = ERR_NOTONCHANNEL(user.getNickname(), _name);
+			server.sendMessageToUser(user, mess);
+			return ;
+		}
 	}
 
 	//send one message per information to the user requesting information about channel users

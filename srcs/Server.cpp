@@ -16,17 +16,15 @@ Server::Server(void) {}
 - Gets information about network addresses for server listening.
 - Creates and binds a socket by looping through the results obtained.
 */
-Server::Server(std::string const &  port, std::string const & password, std::string const & bot_path) :
+Server::Server(std::string const &  port, std::string const & password):
 	_port(port),
-	_password(password),
-	_bot(true)/*,
-	_robot(bot_path.c_str())*/
+	_password(password)
 {
 	struct addrinfo		hints;
 	struct addrinfo		*res;
 	struct addrinfo		*rp;
 	int					status;
-	(void)bot_path;
+
 	// Define address info
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC; // IPv4 and IPv6
@@ -35,8 +33,10 @@ Server::Server(std::string const &  port, std::string const & password, std::str
 	hints.ai_flags = AI_PASSIVE; // For the exact IP address
 
 	status = getaddrinfo(NULL, _port.c_str(), &hints, &res);
-	if (status != 0)
-		error("Failed to get adress");
+	if (status != 0) {
+		throw std::runtime_error("Error: failed to connect to host");
+	}
+
 	int reuse = 1;
 
 	for (rp = res; rp != NULL; rp = rp->ai_next) {
@@ -44,19 +44,26 @@ Server::Server(std::string const &  port, std::string const & password, std::str
 		if (_socketServer == -1)
 			continue ;
 
-		if (setsockopt(_socketServer, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == -1)
-    		error("Failed to setReuse");
+		if (setsockopt(_socketServer, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == -1) {
+			freeaddrinfo(res);
+			throw std::runtime_error("Error: cannot set option to socket");
+		}
 
-		setNonBlocking(_socketServer);
+		if (fcntl(_socketServer, F_SETFL, O_NONBLOCK) == -1) {
+			freeaddrinfo(res);
+			throw std::runtime_error("Error: cannot set option to socket");
+		}
 
-		if (bind(_socketServer, rp->ai_addr, rp->ai_addrlen) == 0)
-			break ;
+		if (bind(_socketServer, rp->ai_addr, rp->ai_addrlen) == -1) {
+			freeaddrinfo(res);
+			throw std::runtime_error("Error: cannot bind");
+		} else {
+			freeaddrinfo(res);
+			return ;
+		}
 	}
-
-	freeaddrinfo(res);
-	if (rp == NULL)
-		error("Failed to bind");
-	rp = NULL;
+	
+	throw std::runtime_error("Error: cannot bind");
 }
 
 /* Destructor, ensuring sever's socket is closed */
@@ -65,231 +72,86 @@ Server::~Server(void) {
 	close(_epollfd);
 }
 
-
-/******************************************************************************/
-/*							USERS MANAGEMENT								  */
-/******************************************************************************/
-
-/*
-Checks if the provided password matches the password stored in the Server object.
-- Success:returns 1,
-- Error: 0.
-*/
-int Server::checkPassword(std::string const & password) const {
-	return (password == _password);
-}
-
-/*
-Removes a user from the server by :
-- removing its file descriptor from the epoll instance,
-- removing it from the _users user vector,
-- freeing the memory allocated for the user object.
-*/
-void	Server::removeUser(User &user)
-{
-	struct epoll_event				ev;
-	std::vector<User *>::iterator	userIt;
-	std::vector<Channel *>			channels;
-	
-	if (epoll_ctl(_epollfd, EPOLL_CTL_DEL, user.getSocket(), &ev) == -1)
-		return ;
-
-	channels = user.getChannelJoined();
-	for (std::vector<Channel *>::iterator channelIt = channels.begin(); channelIt != channels.end(); ++channelIt) {
-		(*channelIt)->removeUser(user);
-	}
-	
-	userIt = std::find(_users.begin(), _users.end(), &user);
-	if (userIt == _users.end())
-		return ;
-	
-	_users.erase(userIt);
-	delete &user;
-}
-
-/*
-- creates a new user, 
-- creates a socket for it, 
-- adds it to an epoll event monitoring mechanism,
-- adds it to a list of connected users.
-*/
-//after create new user in our struct it's time to add him into the event instance
-//whith epoll_ctl, we nedd a new struct epoll_event to associate with the sockfd user's
-//we set ev.events with EPOLLIN so the instance will watch for this socket the EPOLLIN event only
-//and we use EPOLL_CTL_ADD for adding the socket and the ev associate
-
-int	Server::createUser()
-{
-	User				*user = new User();
-	struct epoll_event	ev;
-	int					sockfd;
-
-	sockfd = user->createUserSocket(_socketServer);
-	if (!sockfd) {
-		delete user;
-		return (1);
-	}
-	
-	ev.events = EPOLLIN;
-	ev.data.fd = sockfd;
-	if (epoll_ctl(_epollfd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
-		delete user;
-		return (1);
-	}
-
-	_users.push_back(user);
-	return (0);
-}
-
-/*
-Searches a list for a user based on the given socket file descriptor:
-- success: returns the matching user if found,
-- Error: returns NULL.
-*/
-User	*Server::findUserBySocket(const int sockfd) const
-{
-	for (std::vector<User *>::const_iterator it = _users.begin(); it != _users.end(); ++it) {
-        if ((*it)->getSocket() == sockfd)
-			return ((*it));
-    }
-	return (NULL);
-}
-
-/*
-Searches for a user in a list based on the given nickname:
-- success: returns the matching user if found,
-- Error: returns NULL.
-*/
-User	*Server::findUserByNickname(const std::string &targetNickname, User const &user) const
-{
-	for (std::vector<User *>::const_iterator it = _users.begin(); it != _users.end(); ++it) {
-	    if ((*it)->getNickname() == targetNickname)
-			return ((*it));
-    }
-	throw Server::noSuchNick(user.getNickname(), targetNickname);
-}
-
-User	*Server::findUserByNickname(const std::string &targetNickname) const
-{
-	for (std::vector<User *>::const_iterator it = _users.begin(); it != _users.end(); ++it) {
-	    if ((*it)->getNickname() == targetNickname)
-			return ((*it));
-    }
-	return (NULL);
-}
-
-/******************************************************************************/
-/*							CHANNEL MANAGEMENT								  */
-/******************************************************************************/
-
-/*
-Creates and adds a new channel to a list of channels.
-Returns this newly created channel.
-*/
-Channel	*Server::createChannel(User &user, std::string const & channelName)//pas forcement besoin de *user 
-{
-	std::string			adress;
-	std::string			creatorInfos;
-	std::time_t			timestamp;
-	std::stringstream	creationTime;
-	Channel				*channel;
-
-	adress = inet_ntoa(user.getAddr().sin_addr);
-	creatorInfos = user.getNickname() + "!" + user.getUsername() + "@" + adress;
-    timestamp = std::time(NULL);
-	creationTime << timestamp;
-	channel = new Channel(channelName, creatorInfos, creationTime.str());//a proteger avec une exception?
-
-	_channels.push_back(channel);
-	return (channel);
-}
-
-/*
-Searches for a channel in a list based on the given name:
-- success: returns the matching channel if found,
-- Error: returns NULL.
-*/
-Channel	*Server::findChannelByName(std::string const & name, User const &user) const
-{
-	for (std::vector<Channel *>::const_iterator it = _channels.begin(); it != _channels.end(); ++it) {
-		if ((*it)->getName() == name)
-			return ((*it));
-	}
-	throw Server::noSuchChannel(user.getNickname(), name);
-}
-
-void	Server::removeChannel(Channel *channel)
-{
-	std::vector<Channel *>::iterator it;
-	it = std::find(_channels.begin(), _channels.end(), channel);
-	if (it == _channels.end())
-		return ;
-	
-	_channels.erase(it);
-	delete channel;
-}
-
-/******************************************************************************/
-/*							MESSAGES MANAGEMENT								  */
-/******************************************************************************/
-
-/*
-Sends a message to a user on its socket
-- Success: returns 0
-- Error: returns 1.
-*/
-int	Server::sendMessageToUser(const User &user, const std::string message) const
-{
-	std::cout << "sending to " + user.getNickname() + "... "  << message;
-	int sendBytes = send(user.getSocket(), message.c_str(), message.length(), 0);
-	if (sendBytes == -1)
-		return (1);
-	return (0);
-}
-
-void	Server::sendMessageToALL(const User &user, std::map<User *, bool> const &users, std::string message, bool toMe) const
-{
-	for (std::map<User *, bool>::const_iterator it = users.begin(); it != users.end(); it++) {
-		if (!toMe && &user == it->first)
-			continue ;
-		if (sendMessageToUser(*(*it).first, message))
-			std::cerr << "Error\n";
-	}
-}
-
-/*
-Sends a message to a user specified by nickname
-or to all members of a channel specified by name,
-depending on the given target.
-*/
-void	Server::sendMessage(const User &user, std::string target, std::string message) const
-{
-	Channel				*channel;
-	User				*usertarget;
-	
-	try
-	{
-		channel = findChannelByName(target, user);
-		sendMessageToALL(user, channel->getMembers(), message, false);
-	}
-	catch (const std::exception& e)
-	{
-		try
-		{
-			usertarget = findUserByNickname(target, user);
-		}
-		catch(const std::exception& e)
-		{
-			sendMessageToUser(user, e.what());
-			return ;
-		}
-		sendMessageToUser(*usertarget, message);
-	}
-}
-
 /******************************************************************************/
 /*						       EVENTS MANAGEMENT     						  */
 /******************************************************************************/
+
+/*
+Initializes and runs the server,
+handling events on file descriptors
+using the epoll instance
+and the handleEvents function.
+*/
+void	Server::run(void)
+{
+	struct epoll_event	ev;
+	struct epoll_event	events[EVENTS_MAX];
+	int					nfds;
+
+
+	_epollfd = epoll_create1(0);
+	if (_epollfd == -1) {
+		throw std::runtime_error("Error: failed to create epoll");
+	}
+
+	if (listen(_socketServer, EVENTS_MAX) < 0) {
+		throw std::runtime_error("Error: failed to listen on socket");
+	}
+
+	memset(&ev, 0, sizeof(ev));
+	ev.events = EPOLLIN;
+	ev.data.fd = _socketServer;
+	if (epoll_ctl(_epollfd, EPOLL_CTL_ADD, _socketServer, &ev) == -1) {
+		throw std::runtime_error("Error: failed to manage sockets");
+	}
+
+	while (1) {
+		nfds = epoll_wait(_epollfd, events, EVENTS_MAX, -1);
+		if (g_end) {
+			quit();
+			return ;
+		}
+
+		if (nfds == -1) {
+			throw std::runtime_error("Error: failed to received events");
+		}
+		
+		for (int n = 0; n < nfds; ++n) {
+			handleEvents(events[n].data.fd, events[n]);
+		}
+	}
+}
+
+/*
+Handles events from epoll file descriptors,
+processes data received from clients, 
+manages user logins, 
+and executes pending commands from logged in users.
+*/
+void	Server::handleEvents(int fd, struct epoll_event event)
+{
+	User	*user;
+
+	if (fd == _socketServer) { // First connection of a client
+		if (createUser())
+			return ;
+
+	} else { // Handle events from clients
+		if (event.events != EPOLLIN)
+			return ;
+
+		user = findUserBySocket(fd);
+		if (!user)
+			return ;
+
+		std::string	buffer = receiveData(fd);
+		getCommands(*user, buffer);
+
+		if (user->getCommands().size() >= 1) {
+			execCommand(*user);
+		}
+	}
+}
 
 /*
 Receives data from a socket and returns it as a string,
@@ -331,8 +193,10 @@ int	Server::getCommands(User &user, std::string & buffer) const
 	buffer = user.getBuffer() + buffer;
 	while (buffer.length()) {
 		pos = buffer.find('\n');
-		if (pos == std::string::npos)
+		if (pos == std::string::npos) {
+			user.setBuffer(buffer);
 			return (1);
+		}
 
 		std::string	command = buffer.substr(0, pos);
 		user.addCommand(command);
@@ -342,12 +206,13 @@ int	Server::getCommands(User &user, std::string & buffer) const
 	return (0);
 }
 
+/*Parse the commands*/
 void	Server::parseCommands(
 	std::string &s,
 	std::string &cmd,
 	std::vector<std::string> &args,
 	std::string &mess
-) const{
+) const {
 	size_t  pos;
 
 	pos = s.find('\r');
@@ -384,7 +249,7 @@ void	Server::execCommand(User &user)
 		std::string 				cmd;
 		std::string 				mess;
 		std::vector<std::string>	args;
-
+		
 		parseCommands(commands.front(), cmd, args, mess);
 		commands.pop_front();
 
@@ -399,7 +264,7 @@ void	Server::execCommand(User &user)
 			else if (cmd == "NICK")
 				nickName(user, args);
 			else if (cmd == "QUIT")
-				return (quit(user, mess));
+				return (removeUser(user, mess));
 		} else {
 			if (cmd == "NICK")
 				nickName(user, args);
@@ -410,7 +275,7 @@ void	Server::execCommand(User &user)
 			else if (cmd == "userhost")
 				userHost(user, args);
 			else if (cmd == "PRIVMSG")
-				message(user, args, mess);
+				privmsg(user, args, mess);
 			else if (cmd == "JOIN")
 				joinChannel(user, args);
 			else if (cmd == "PART")
@@ -428,87 +293,13 @@ void	Server::execCommand(User &user)
 			else if (cmd == "WHOIS")
 				whoIs(user, args);
 			else if (cmd == "QUIT")
-				return (quit(user, mess));
+				return (removeUser(user, mess));
 		}
 	}
 	user.setCommands(commands);
 }
 
-/*
-Handles events from epoll file descriptors,
-processes data received from clients, 
-manages user logins, 
-and executes pending commands from logged in users.
-*/
-void	Server::handleEvents(int fd, struct epoll_event event)
-{
-	User	*user;
-
-	if (fd == _socketServer) { // First connection of a client
-		if (createUser())
-			error("Failed");
-
-	} else { // Handle events from clients
-		if (event.events != EPOLLIN)
-			return ;
-
-		user = findUserBySocket(fd);
-		if (!user)
-			return ;
-
-		std::string	buffer = receiveData(fd);
-		getCommands(*user, buffer);
-
-		if (user->getCommands().size() >= 1) {
-			execCommand(*user);
-		}
-	}
-}
-
-/*
-Initializes and runs the server,
-handling events on file descriptors
-using the epoll instance
-and the handleEvents function.
-*/
-void	Server::run(void)
-{
-	struct epoll_event	ev;
-	struct epoll_event	events[EVENTS_MAX];
-	int					nfds;
-
-
-	_epollfd = epoll_create1(0);
-	if (_epollfd == -1)
-		error("Failed to create epoll");
-
-	if (listen(_socketServer, EVENTS_MAX) < 0)
-		error("Failed to listen on socket");
-
-	memset(&ev, 0, sizeof(ev));
-	ev.events = EPOLLIN;
-	ev.data.fd = _socketServer;
-	if (epoll_ctl(_epollfd, EPOLL_CTL_ADD, _socketServer, &ev) == -1)
-		error("Failed to manage sockets");
-
-	while (1) {
-		nfds = epoll_wait(_epollfd, events, EVENTS_MAX, -1);
-		if (g_end) {
-			end();
-			return ;
-		}
-
-		if (nfds == -1) {
-			error("Failed to received events");
-		}
-		
-		for (int n = 0; n < nfds; ++n) {
-			handleEvents(events[n].data.fd, events[n]);
-		}
-	}
-}
-
-void	Server::end()
+void	Server::quit()
 {
 	for (std::vector<User *>::const_iterator it = _users.begin(); it != _users.end(); ++it) {
         delete *it;
@@ -517,4 +308,231 @@ void	Server::end()
 	for (std::vector<Channel *>::const_iterator it = _channels.begin(); it != _channels.end(); ++it) {
         delete *it;
     }
+}
+
+/******************************************************************************/
+/*							USERS MANAGEMENT								  */
+/******************************************************************************/
+
+/*
+Checks if the provided password matches the password stored in the Server object.
+- Success:returns 1,
+- Error: 0.
+*/
+int Server::checkPassword(std::string const & password) const {
+	return (password == _password);
+}
+
+
+/*
+- creates a new user, 
+- creates a socket for it, 
+- adds it to an epoll event monitoring mechanism,
+- adds it to a list of connected users.
+*/
+//after create new user in our struct it's time to add him into the event instance
+//whith epoll_ctl, we nedd a new struct epoll_event to associate with the sockfd user's
+//we set ev.events with EPOLLIN so the instance will watch for this socket the EPOLLIN event only
+//and we use EPOLL_CTL_ADD for adding the socket and the ev associate
+int	Server::createUser()
+{
+	User				*user = new User();
+	struct epoll_event	ev;
+	int					sockfd;
+
+	sockfd = user->createUserSocket(_socketServer);
+	if (!sockfd) {
+		delete user;
+		return (1);
+	}
+	
+	ev.events = EPOLLIN;
+	ev.data.fd = sockfd;
+	if (epoll_ctl(_epollfd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
+		delete user;
+		return (1);
+	}
+
+	_users.push_back(user);
+	return (0);
+}
+
+/*
+Removes a user from the server by :
+- removing its file descriptor from the epoll instance,
+- removing it from the _users user vector,
+- freeing the memory allocated for the user object.
+*/
+void	Server::removeUser(User &user, std::string const & reason)
+{
+	struct epoll_event				ev;
+	std::vector<User *>::iterator	el;
+
+	if (epoll_ctl(_epollfd, EPOLL_CTL_DEL, user.getSocket(), &ev) == -1)
+		return ;
+
+	el = std::find(_users.begin(), _users.end(), &user);
+	if (el == _users.end())
+		return ;
+	_users.erase(el);
+	
+	user.quit(*this, reason);
+
+	delete &user;
+}
+
+/*
+Searches a list for a user based on the given socket file descriptor:
+- success: returns the matching user if found,
+- Error: returns NULL.
+*/
+User	*Server::findUserBySocket(const int sockfd) const
+{
+	for (std::vector<User *>::const_iterator it = _users.begin(); it != _users.end(); ++it) {
+        if ((*it)->getSocket() == sockfd)
+			return ((*it));
+    }
+	return (NULL);
+}
+
+/*
+Searches for a user in a list based on the given nickname:
+- success: returns the matching user if found,
+- Error: throw an error.
+*/
+User	*Server::findUserByNickname(const std::string &targetNickname, User const &user) const
+{
+	for (std::vector<User *>::const_iterator it = _users.begin(); it != _users.end(); ++it) {
+	    if ((*it)->getNickname() == targetNickname)
+			return ((*it));
+    }
+	throw Server::noSuchNick(user.getNickname(), targetNickname);
+}
+
+/*
+Searches for a user in a list based on the given nickname:
+- success: returns the matching user if found,
+- Error: returns NULL.
+*/
+User	*Server::findUserByNickname(const std::string &targetNickname) const
+{
+	for (std::vector<User *>::const_iterator it = _users.begin(); it != _users.end(); ++it) {
+	    if ((*it)->getNickname() == targetNickname)
+			return ((*it));
+    }
+	return (NULL);
+}
+
+/******************************************************************************/
+/*							CHANNEL MANAGEMENT								  */
+/******************************************************************************/
+
+/*
+Creates and adds a new channel to a list of channels.
+Returns this newly created channel.
+*/
+Channel	*Server::createChannel(User &user, std::string const & channelName)//pas forcement besoin de *user 
+{
+	std::string			adress;
+	std::string			creatorInfos;
+	std::time_t			timestamp;
+	std::stringstream	creationTime;
+	Channel				*channel;
+
+	adress = inet_ntoa(user.getAddr().sin_addr);
+	creatorInfos = user.getNickname() + "!" + user.getUsername() + "@" + adress;
+    timestamp = std::time(NULL);
+	creationTime << timestamp;
+	channel = new Channel(channelName, creatorInfos, creationTime.str());//a proteger avec une exception?
+
+	_channels.push_back(channel);
+	return (channel);
+}
+
+/*
+Searches for a channel in a list based on the given name:
+- success: returns the matching channel if found,
+- Error: throw an exception.
+*/
+Channel	*Server::findChannelByName(std::string const & name, User const &user) const
+{
+	for (std::vector<Channel *>::const_iterator it = _channels.begin(); it != _channels.end(); ++it) {
+		if ((*it)->getName() == name)
+			return ((*it));
+	}
+	throw Server::noSuchChannel(user.getNickname(), name);
+}
+
+/*
+Remove and delete the channel given as parameter.
+*/
+void	Server::removeChannel(Channel *channel)
+{
+	std::vector<Channel *>::iterator el;
+	el = std::find(_channels.begin(), _channels.end(), channel);
+	if (el == _channels.end())
+		return ;
+	
+	_channels.erase(el);
+	delete channel;
+}
+
+/******************************************************************************/
+/*							MESSAGES MANAGEMENT								  */
+/******************************************************************************/
+
+/*
+Sends a message to a user on its socket
+- Success: returns 0
+- Error: returns 1.
+*/
+int	Server::sendMessageToUser(const User &user, const std::string message) const
+{
+	std::cout << "sending to " + user.getNickname() + "... "  << message;
+	int sendBytes = send(user.getSocket(), message.c_str(), message.length(), 0);
+	if (sendBytes == -1)
+		return (1);
+	return (0);
+}
+
+/*
+Sends a message to every member of a channel on their socket
+- Success: returns 0
+- Error: returns 1.
+*/
+void	Server::sendMessageToALL(const User &user, std::map<User *, bool> users, std::string message, bool toMe) const
+{
+	for (std::map<User *, bool>::iterator it = users.begin(); it != users.end(); it++) {
+		if (!toMe && &user == it->first)
+			continue ;
+		sendMessageToUser(*(*it).first, message);
+	}
+}
+
+/*
+Sends a message to a user specified by nickname
+or to all members of a channel specified by name,
+depending on the given target.
+*/
+void	Server::sendMessage(const User &user, std::string target, std::string message) const
+{
+	Channel				*channel;
+	User				*usertarget;
+	
+	try {
+		channel = findChannelByName(target, user);
+		if (channel->userOnChannel(const_cast<User &>(user)))
+			sendMessageToALL(user, channel->getMembers(), message, false);
+	
+	} catch (const std::exception& e) {
+		try {
+			usertarget = findUserByNickname(target, user);
+		
+		} catch(const std::exception& e) {
+			sendMessageToUser(user, e.what());
+			return ;
+		}
+
+		sendMessageToUser(*usertarget, message);
+	}
 }

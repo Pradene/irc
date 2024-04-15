@@ -17,9 +17,9 @@
 
 # include <sys/socket.h>
 
-void	error(std::string err);
-int 	setNonBlocking(int fd);
-void	displayStringVector(std::vector<std::string> strings);
-int	    toInt(std::string s);
+void	    displayStringVector(std::vector<std::string> strings);
+int	        toInt(std::string s);
+std::string toString(int n);
+bool        isValidName(std::string const &name);
 
 #endif
